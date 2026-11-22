@@ -2,6 +2,8 @@ import cors from "cors";
 import "dotenv/config";
 import express from "express";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
+import { createVerifyToken } from "./middleware/verifyToken.js";
+import { verifyOwner } from "./middleware/verifyRole.js";
 
 const app = express();
 
@@ -52,7 +54,10 @@ async function connectToMongoDB() {
 
 const db = client.db("rentora");
 const equipmentCollection = db.collection("equipmentCollection");
-// const organizersCollection = db.collection("organizers");
+const userCollection = db.collection("user");
+
+
+const verifyToken = createVerifyToken(userCollection);
 
 app.use(async (req, res, next) => {
   try {
@@ -70,7 +75,7 @@ app.use(async (req, res, next) => {
 const isValidObjectId = (id) =>
   ObjectId.isValid(id) && String(new ObjectId(id)) === id;
 
-app.post("/api/v1/equipment", async (req, res) => {
+app.post("/api/v1/equipment", verifyToken, verifyOwner, async (req, res) => {
   try {
     const data = req.body;
     console.log(data);
