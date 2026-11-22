@@ -2,8 +2,8 @@ import cors from "cors";
 import "dotenv/config";
 import express from "express";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
-import { createVerifyToken } from "./middleware/verifyToken.js";
 import { verifyOwner } from "./middleware/verifyRole.js";
+import { createVerifyToken } from "./middleware/verifyToken.js";
 
 const app = express();
 
@@ -55,7 +55,7 @@ async function connectToMongoDB() {
 const db = client.db("rentora");
 const equipmentCollection = db.collection("equipmentCollection");
 const userCollection = db.collection("user");
-
+const bookingsCollection = db.collection("bookingsCollection");
 
 const verifyToken = createVerifyToken(userCollection);
 
@@ -95,14 +95,45 @@ app.get("/api/v1/equipment", async (req, res) => {
     res.send(result);
   } catch (error) {
     console.error("Error fetching equipment:", error.message);
-    res.status(500).send({message: "Failed to fetch equipment"});
+    res.status(500).send({ message: "Failed to fetch equipment" });
   }
 });
 
-app.get("/api/v1/equipment/:id", async (req, res) => {
+app.get(
+  "/api/v1/equipment/my-equipment",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const email = req.user.email;
+
+      const result = await equipmentCollection
+        .find({ "owner.email": email })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send({
+        success: true,
+        message: "My equipment fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Error fetching my equipment:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch my equipment",
+      });
+    }
+  },
+);
+
+
+app.get("/api/v1/equipment/:id",verifyToken,
+  verifyOwner, async (req, res) => {
   try {
     const { id } = req.params;
- 
+
     if (!isValidObjectId(id)) {
       return res.status(400).send({ message: "Invalid equipment ID" });
     }
@@ -122,25 +153,120 @@ app.get("/api/v1/equipment/:id", async (req, res) => {
   }
 });
 
-// app.delete("/api/v1/equipment/:id", async (req, res) => {
-//   try {
-//     const { id } = req.params;
-//     console.log(id)
-//   if (!isValidObjectId(id)) {
-//       return res.status(400).send({ message: "Invalid equipment ID" });
-//     }
 
-//     const result = await equipmentCollection.deleteOne({
-//       _id: new ObjectId(id),
-//     });
 
-//     res.send(result);
-//   } catch (error) {
-//     console.error("Delete equipment Error:", error);
-//     res.status(500).send({ message: "Failed to delete equipment" });
-//   }
-// });
 
+
+app.delete("/api/v1/equipment/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(id)
+  if (!isValidObjectId(id)) {
+      return res.status(400).send({ message: "Invalid equipment ID" });
+    }
+
+    const result = await equipmentCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    res.send(result);
+  } catch (error) {
+    console.error("Delete equipment Error:", error);
+    res.status(500).send({ message: "Failed to delete equipment" });
+  }
+});
+
+app.patch(
+  "/api/v1/equipment/:id",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      console.log(id)
+
+      if (!isValidObjectId(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID",
+        });
+      }
+
+      const email = req.user.email;
+
+      const {
+        name,
+        category,
+        rentalPrice,
+        availableQuantity,
+        description,
+        image,
+      
+      } = req.body;
+
+      const updatedData = {};
+
+      if (name !== undefined)
+        updatedData.name = name;
+
+      if (category !== undefined)
+        updatedData.category = category;
+
+      if (rentalPrice !== undefined)
+        updatedData.rentalPrice = rentalPrice;
+
+      if (availableQuantity !== undefined)
+        updatedData.availableQuantity = availableQuantity;
+
+      if (description !== undefined)
+        updatedData.description = description;
+
+      if (image !== undefined)
+        updatedData.image = image;
+
+      
+
+      if (Object.keys(updatedData).length === 0) {
+        return res.status(400).send({
+          success: false,
+          message: "No data provided to update",
+        });
+      }
+
+      updatedData.updatedAt = new Date();
+
+      const result = await equipmentCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          "owner.email": email,
+        },
+        {
+          $set: updatedData,
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found or you are not the owner",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "Equipment updated successfully",
+        modifiedCount: result.modifiedCount,
+      });
+    } catch (error) {
+      console.error("Error updating equipment:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to update equipment",
+      });
+    }
+  }
+);
 
 app.get("/", (req, res) => {
   res.send("rentora Server is Running!");
