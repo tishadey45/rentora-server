@@ -262,7 +262,7 @@ app.get(
       const email = req.user.email;
 
       const result = await bookingsCollection
-        .find({ "renter.email": email })
+        .find({ "owner.email": email })
         .sort({ createdAt: -1 })
         .toArray();
 
