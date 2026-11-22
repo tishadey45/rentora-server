@@ -128,9 +128,7 @@ app.get(
   },
 );
 
-
-app.get("/api/v1/equipment/:id",verifyToken,
-  verifyOwner, async (req, res) => {
+app.get("/api/v1/equipment/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -153,15 +151,11 @@ app.get("/api/v1/equipment/:id",verifyToken,
   }
 });
 
-
-
-
-
 app.delete("/api/v1/equipment/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(id)
-  if (!isValidObjectId(id)) {
+    console.log(id);
+    if (!isValidObjectId(id)) {
       return res.status(400).send({ message: "Invalid equipment ID" });
     }
 
@@ -183,7 +177,7 @@ app.patch(
   async (req, res) => {
     try {
       const { id } = req.params;
-      console.log(id)
+      console.log(id);
 
       if (!isValidObjectId(id)) {
         return res.status(400).send({
@@ -201,30 +195,22 @@ app.patch(
         availableQuantity,
         description,
         image,
-      
       } = req.body;
 
       const updatedData = {};
 
-      if (name !== undefined)
-        updatedData.name = name;
+      if (name !== undefined) updatedData.name = name;
 
-      if (category !== undefined)
-        updatedData.category = category;
+      if (category !== undefined) updatedData.category = category;
 
-      if (rentalPrice !== undefined)
-        updatedData.rentalPrice = rentalPrice;
+      if (rentalPrice !== undefined) updatedData.rentalPrice = rentalPrice;
 
       if (availableQuantity !== undefined)
         updatedData.availableQuantity = availableQuantity;
 
-      if (description !== undefined)
-        updatedData.description = description;
+      if (description !== undefined) updatedData.description = description;
 
-      if (image !== undefined)
-        updatedData.image = image;
-
-      
+      if (image !== undefined) updatedData.image = image;
 
       if (Object.keys(updatedData).length === 0) {
         return res.status(400).send({
@@ -242,7 +228,7 @@ app.patch(
         },
         {
           $set: updatedData,
-        }
+        },
       );
 
       if (result.matchedCount === 0) {
@@ -265,7 +251,35 @@ app.patch(
         message: "Failed to update equipment",
       });
     }
-  }
+  },
+);
+app.get(
+  "/api/v1/bookings/my-rentals",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const email = req.user.email;
+
+      const result = await bookingsCollection
+        .find({ "renter.email": email })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send({
+        success: true,
+        message: "My rentals fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Error fetching my rentals:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch my rentals",
+      });
+    }
+  },
 );
 
 app.get("/", (req, res) => {
