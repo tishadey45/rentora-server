@@ -128,35 +128,35 @@ app.get(
   },
 );
 
+// Owners only. Returns the signed-in owner's own bookings for their equipment.
+// app.get(
+//   "/api/v1/bookings/my-rentals",
+//   verifyToken,
+//   verifyOwner,
+//   async (req, res) => {
+//     try {
+//       const email = req.user.email;
 
-app.get(
-  "/api/v1/bookings/my-rentals",
-  verifyToken,
-  verifyOwner,
-  async (req, res) => {
-    try {
-      const email = req.user.email;
+//       const result = await bookingsCollection
+//         .find({ "owner.email": email })
+//         .sort({ createdAt: -1 })
+//         .toArray();
 
-      const result = await bookingsCollection
-        .find({ "owner.email": email })
-        .sort({ createdAt: -1 })
-        .toArray();
+//       res.send({
+//         success: true,
+//         message: "My rentals fetched successfully",
+//         data: result,
+//       });
+//     } catch (error) {
+//       console.error("Error fetching my rentals:", error.message);
 
-      res.send({
-        success: true,
-        message: "My rentals fetched successfully",
-        data: result,
-      });
-    } catch (error) {
-      console.error("Error fetching my rentals:", error.message);
-
-      res.status(500).send({
-        success: false,
-        message: "Failed to fetch my rentals",
-      });
-    }
-  },
-);
+//       res.status(500).send({
+//         success: false,
+//         message: "Failed to fetch my rentals",
+//       });
+//     }
+//   },
+// );
 
 // Customers only. Returns the signed-in customer's own bookings.
 app.get(
@@ -222,6 +222,246 @@ app.get(
       res.status(500).send({
         success: false,
         message: "Failed to fetch my bookings",
+      });
+    }
+  },
+);
+
+const BOOKING_DAY_MS = 24 * 60 * 60 * 1000;
+
+// Parses a strict "YYYY-MM-DD" string into a UTC date (midnight), or null.
+function parseDateOnly(value) {
+  if (typeof value !== "string") return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  // Reject values that roll over (e.g. 2026-02-31).
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function startOfTodayUtc() {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  );
+}
+
+function formatDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+// Inclusive duration in days → billable units based on the rental type.
+function calculateUnitCount(rentalType, durationDays) {
+  if (rentalType === "Weekly") return Math.ceil(durationDays / 7);
+  if (rentalType === "Monthly") return Math.ceil(durationDays / 30);
+  return durationDays;
+}
+
+function roundToTwo(value) {
+  return Math.round(value * 100) / 100;
+}
+
+// Customers only. Creates a booking for the signed-in customer.
+app.post(
+  "/api/v1/bookings",
+  verifyToken,
+  verifyRenter,
+  async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const {
+        equipmentId,
+        startDate,
+        endDate,
+        quantity,
+        contactNumber,
+        deliveryAddress,
+        notes,
+      } = body;
+
+      // ---- equipment id ----
+      if (!isValidObjectId(equipmentId)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID",
+        });
+      }
+
+      // ---- dates ----
+      const start = parseDateOnly(startDate);
+      const end = parseDateOnly(endDate);
+
+      if (!start || !end) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid start or end date. Use YYYY-MM-DD.",
+        });
+      }
+
+      if (end < start) {
+        return res.status(400).send({
+          success: false,
+          message: "End date must be on or after the start date",
+        });
+      }
+
+      if (start < startOfTodayUtc()) {
+        return res.status(400).send({
+          success: false,
+          message: "Start date cannot be in the past",
+        });
+      }
+
+      // ---- quantity ----
+      const quantityNumber =
+        typeof quantity === "number"
+          ? quantity
+          : typeof quantity === "string" && quantity.trim() !== ""
+            ? Number(quantity)
+            : NaN;
+
+      if (!Number.isInteger(quantityNumber) || quantityNumber < 1) {
+        return res.status(400).send({
+          success: false,
+          message: "Quantity must be a whole number of at least 1",
+        });
+      }
+
+      // ---- contact + address ----
+      if (typeof contactNumber !== "string" || !contactNumber.trim()) {
+        return res.status(400).send({
+          success: false,
+          message: "Contact number is required",
+        });
+      }
+
+      if (
+        typeof deliveryAddress !== "string" ||
+        !deliveryAddress.trim()
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Delivery address is required",
+        });
+      }
+
+      // ---- equipment (authoritative source of price/owner) ----
+      const equipment = await equipmentCollection.findOne({
+        _id: new ObjectId(equipmentId),
+      });
+
+      if (!equipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found",
+        });
+      }
+
+      if (equipment.isApproved !== true) {
+        return res.status(409).send({
+          success: false,
+          message: "This equipment is not available for booking",
+        });
+      }
+
+      if (equipment.availability === "unavailable") {
+        return res.status(409).send({
+          success: false,
+          message: "This equipment is currently unavailable",
+        });
+      }
+
+      const availableQuantity = Number(equipment.availableQuantity);
+      if (
+        Number.isFinite(availableQuantity) &&
+        quantityNumber > availableQuantity
+      ) {
+        return res.status(409).send({
+          success: false,
+          message: "Not enough units available for the requested quantity",
+        });
+      }
+
+      const rentalPrice = Number(equipment.rentalPrice);
+      if (!Number.isFinite(rentalPrice) || rentalPrice < 0) {
+        return res.status(500).send({
+          success: false,
+          message: "Equipment price is invalid",
+        });
+      }
+
+      // ---- calculate amount from the DB price only ----
+      const durationDays = Math.floor((end - start) / BOOKING_DAY_MS) + 1;
+      const unitCount = calculateUnitCount(equipment.rentalType, durationDays);
+      const totalAmount = roundToTwo(
+        rentalPrice * unitCount * quantityNumber
+      );
+
+      const now = new Date();
+      const owner = equipment.owner ?? {};
+
+      const bookingDoc = {
+        customer: {
+          id: req.user.id,
+          name: req.user.name,
+          email: req.user.email,
+        },
+        equipmentId: equipment._id,
+        equipment: {
+          name: equipment.name,
+          image: equipment.image,
+          category: equipment.category,
+          rentalPrice,
+          rentalType: equipment.rentalType,
+        },
+        owner: {
+          id: owner.id ?? "",
+          name: owner.name ?? "",
+          email: owner.email ?? "",
+        },
+        startDate: formatDateOnly(start),
+        endDate: formatDateOnly(end),
+        durationDays,
+        quantity: quantityNumber,
+        unitCount,
+        totalAmount,
+        paymentStatus: "pending",
+        bookingStatus: "upcoming",
+        contactNumber: contactNumber.trim(),
+        deliveryAddress: deliveryAddress.trim(),
+        notes: typeof notes === "string" ? notes.trim() : "",
+        bookingDate: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await bookingsCollection.insertOne(bookingDoc);
+
+      res.status(201).send({
+        success: true,
+        message: "Booking created successfully",
+        data: { ...bookingDoc, _id: result.insertedId },
+      });
+    } catch (error) {
+      console.error("Error creating booking:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to create booking",
       });
     }
   },
