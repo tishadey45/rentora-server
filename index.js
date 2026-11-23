@@ -285,16 +285,6 @@ app.patch(
 );
 
 
-// app.get("/api/v1/admin/users", verifyAdmin ,async (req, res)=>{
-//   try{
-//     const result = await userCollection.find({}).toArray();
-//     res.send(result);
-//   }catch(error){
-//     console.error("Error fetching users:", error.message);
-//     res.status(500).send({ message: "Failed to fetch users" });
-//   }
-// })
-
 
 
 app.get(
@@ -322,6 +312,192 @@ app.get(
       res.status(500).send({
         success: false,
         message: "Failed to fetch users",
+      });
+    }
+  },
+);
+
+// Admins only. Changes only the target user's role.
+app.patch(
+  "/api/v1/admin/users/:id/role",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { role } = req.body ?? {};
+      const allowedRoles = ["customer", "owner", "admin"];
+
+      if (!isValidObjectId(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid user ID",
+        });
+      }
+
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).send({
+          success: false,
+          message: `Invalid role. Allowed roles: ${allowedRoles.join(", ")}`,
+        });
+      }
+
+      const targetUser = await userCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!targetUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // An admin cannot change their own role (prevents accidental lockout).
+      if (String(targetUser._id) === req.user.id) {
+        return res.status(409).send({
+          success: false,
+          message: "You cannot change your own role",
+        });
+      }
+
+      // Never demote the last remaining admin.
+      if (targetUser.role === "admin" && role !== "admin") {
+        const adminCount = await userCollection.countDocuments({
+          role: "admin",
+        });
+
+        if (adminCount <= 1) {
+          return res.status(409).send({
+            success: false,
+            message: "Cannot demote the last remaining admin",
+          });
+        }
+      }
+
+      const updatedUser = await userCollection.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: { role } },
+        {
+          returnDocument: "after",
+          projection: { name: 1, email: 1, role: 1, createdAt: 1 },
+        },
+      );
+
+      if (!updatedUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "User role updated successfully",
+        data: {
+          _id: String(updatedUser._id),
+          name: updatedUser.name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          createdAt: updatedUser.createdAt,
+        },
+      });
+    } catch (error) {
+      console.error("Error updating user role:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to update user role",
+      });
+    }
+  },
+);
+
+// Admins only. Activates or deactivates a user account.
+app.patch(
+  "/api/v1/admin/users/:id/status",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body ?? {};
+      const allowedStatuses = ["active", "inactive"];
+
+      if (!isValidObjectId(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid user ID",
+        });
+      }
+
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: `Invalid status. Allowed statuses: ${allowedStatuses.join(", ")}`,
+        });
+      }
+
+      const targetUser = await userCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!targetUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // An admin cannot deactivate their own account.
+      if (String(targetUser._id) === req.user.id && status === "inactive") {
+        return res.status(409).send({
+          success: false,
+          message: "You cannot deactivate your own account",
+        });
+      }
+
+      const updatedUser = await userCollection.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: { status } },
+        {
+          returnDocument: "after",
+          projection: {
+            name: 1,
+            email: 1,
+            role: 1,
+            status: 1,
+            createdAt: 1,
+          },
+        },
+      );
+
+      if (!updatedUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "User status updated successfully",
+        data: {
+          _id: String(updatedUser._id),
+          name: updatedUser.name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          // Users created before the status field exist are treated as active.
+          status: updatedUser.status ?? "active",
+          createdAt: updatedUser.createdAt,
+        },
+      });
+    } catch (error) {
+      console.error("Error updating user status:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to update user status",
       });
     }
   },
