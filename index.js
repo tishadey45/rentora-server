@@ -715,7 +715,6 @@ app.delete(
       const result = await equipmentCollection.deleteOne({
         _id: new ObjectId(id),
       });
-
       if (result.deletedCount === 0) {
         return res.status(404).send({
           success: false,
