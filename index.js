@@ -296,7 +296,7 @@ app.get(
       const result = await userCollection
         .find(
           {},
-          { projection: { name: 1, email: 1, role: 1, createdAt: 1 } },
+          { projection: { name: 1, email: 1, role: 1, status: 1, createdAt: 1 } },
         )
         .sort({ createdAt: -1 })
         .toArray();
@@ -498,6 +498,242 @@ app.patch(
       res.status(500).send({
         success: false,
         message: "Failed to update user status",
+      });
+    }
+  },
+);
+
+// ---------------------- Admin: All Equipment ----------------------
+
+const EQUIPMENT_STATUSES = ["pending", "approved", "rejected"];
+
+// Fields an admin may update through the general equipment update endpoint.
+// Protected fields (_id, id, owner, isApproved, status) are intentionally excluded.
+const EQUIPMENT_UPDATE_FIELDS = [
+  "name",
+  "description",
+  "category",
+  "rentalPrice",
+  "rentalType",
+  "location",
+  "availableQuantity",
+  "availability",
+  "image",
+  "imageAlt",
+  "brand",
+  "model",
+  "condition",
+  "rentalTerms",
+];
+
+// Derives a status for equipment documents created before the `status` field.
+function resolveEquipmentStatus(equipment) {
+  if (EQUIPMENT_STATUSES.includes(equipment.status)) {
+    return equipment.status;
+  }
+
+  return equipment.isApproved === true ? "approved" : "pending";
+}
+
+// Admins only. Returns all equipment (newest first) with a status.
+app.get(
+  "/api/v1/admin/equipment",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const equipment = await equipmentCollection
+        .find({})
+        .sort({ _id: -1 })
+        .toArray();
+
+      const data = equipment.map((item) => ({
+        ...item,
+        status: resolveEquipmentStatus(item),
+      }));
+
+      res.send({
+        success: true,
+        message: "Equipment fetched successfully",
+        data,
+      });
+    } catch (error) {
+      console.error("Error fetching admin equipment:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch equipment",
+      });
+    }
+  },
+);
+
+// Admins only. Approves or rejects an equipment item.
+app.patch(
+  "/api/v1/admin/equipment/:id/status",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body ?? {};
+
+      if (!isValidObjectId(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID",
+        });
+      }
+
+      if (!EQUIPMENT_STATUSES.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: `Invalid status. Allowed statuses: ${EQUIPMENT_STATUSES.join(", ")}`,
+        });
+      }
+
+      const updatedEquipment = await equipmentCollection.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status,
+            isApproved: status === "approved",
+            updatedAt: new Date(),
+          },
+        },
+        { returnDocument: "after" },
+      );
+
+      if (!updatedEquipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "Equipment status updated successfully",
+        data: {
+          ...updatedEquipment,
+          status: resolveEquipmentStatus(updatedEquipment),
+        },
+      });
+    } catch (error) {
+      console.error("Error updating equipment status:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to update equipment status",
+      });
+    }
+  },
+);
+
+// Admins only. Updates safe equipment information fields.
+app.patch(
+  "/api/v1/admin/equipment/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!isValidObjectId(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID",
+        });
+      }
+
+      const body = req.body ?? {};
+      const updatedData = {};
+
+      for (const field of EQUIPMENT_UPDATE_FIELDS) {
+        if (body[field] !== undefined) {
+          updatedData[field] = body[field];
+        }
+      }
+
+      if (Object.keys(updatedData).length === 0) {
+        return res.status(400).send({
+          success: false,
+          message: "No valid fields provided to update",
+        });
+      }
+
+      updatedData.updatedAt = new Date();
+
+      const updatedEquipment = await equipmentCollection.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: updatedData },
+        { returnDocument: "after" },
+      );
+
+      if (!updatedEquipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "Equipment updated successfully",
+        data: {
+          ...updatedEquipment,
+          status: resolveEquipmentStatus(updatedEquipment),
+        },
+      });
+    } catch (error) {
+      console.error("Error updating equipment:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to update equipment",
+      });
+    }
+  },
+);
+
+// Admins only. Deletes an equipment item.
+app.delete(
+  "/api/v1/admin/equipment/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!isValidObjectId(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID",
+        });
+      }
+
+      const result = await equipmentCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "Equipment deleted successfully",
+        data: { deletedCount: result.deletedCount },
+      });
+    } catch (error) {
+      console.error("Error deleting equipment:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to delete equipment",
       });
     }
   },
