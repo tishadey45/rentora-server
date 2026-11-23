@@ -2,7 +2,7 @@ import cors from "cors";
 import "dotenv/config";
 import express from "express";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
-import { verifyOwner } from "./middleware/verifyRole.js";
+import { verifyAdmin, verifyOwner } from "./middleware/verifyRole.js";
 import { createVerifyToken } from "./middleware/verifyToken.js";
 
 const app = express();
@@ -123,6 +123,36 @@ app.get(
       res.status(500).send({
         success: false,
         message: "Failed to fetch my equipment",
+      });
+    }
+  },
+);
+
+
+app.get(
+  "/api/v1/bookings/my-rentals",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const email = req.user.email;
+
+      const result = await bookingsCollection
+        .find({ "owner.email": email })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send({
+        success: true,
+        message: "My rentals fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Error fetching my rentals:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch my rentals",
       });
     }
   },
@@ -253,30 +283,45 @@ app.patch(
     }
   },
 );
+
+
+// app.get("/api/v1/admin/users", verifyAdmin ,async (req, res)=>{
+//   try{
+//     const result = await userCollection.find({}).toArray();
+//     res.send(result);
+//   }catch(error){
+//     console.error("Error fetching users:", error.message);
+//     res.status(500).send({ message: "Failed to fetch users" });
+//   }
+// })
+
+
+
 app.get(
-  "/api/v1/bookings/my-rentals",
+  "/api/v1/admin/users",
   verifyToken,
-  verifyOwner,
+  verifyAdmin,
   async (req, res) => {
     try {
-      const email = req.user.email;
-
-      const result = await bookingsCollection
-        .find({ "owner.email": email })
+      const result = await userCollection
+        .find(
+          {},
+          { projection: { name: 1, email: 1, role: 1, createdAt: 1 } },
+        )
         .sort({ createdAt: -1 })
         .toArray();
 
       res.send({
         success: true,
-        message: "My rentals fetched successfully",
+        message: "Users fetched successfully",
         data: result,
       });
     } catch (error) {
-      console.error("Error fetching my rentals:", error.message);
+      console.error("Error fetching users:", error.message);
 
       res.status(500).send({
         success: false,
-        message: "Failed to fetch my rentals",
+        message: "Failed to fetch users",
       });
     }
   },
