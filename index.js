@@ -88,9 +88,69 @@ app.post("/api/v1/equipment", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// Escape user input so it can be used safely inside a RegExp.
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 app.get("/api/v1/equipment", async (req, res) => {
   try {
-    const result = await equipmentCollection.find({}).toArray();
+    const {
+      search,
+      category,
+      rentalType,
+      minPrice,
+      maxPrice,
+      availability,
+      sort,
+    } = req.query;
+
+    // Public catalog: only approved equipment.
+    const query = { isApproved: true };
+
+    // Search: case-insensitive partial match on name OR location.
+    if (typeof search === "string" && search.trim()) {
+      const pattern = new RegExp(escapeRegex(search.trim()), "i");
+      query.$or = [{ name: pattern }, { location: pattern }];
+    }
+
+    if (typeof category === "string" && category.trim()) {
+      query.category = category.trim();
+    }
+
+    if (typeof rentalType === "string" && rentalType.trim()) {
+      query.rentalType = rentalType.trim();
+    }
+
+    if (typeof availability === "string" && availability.trim()) {
+      query.availability = availability.trim();
+    }
+
+    const priceFilter = {};
+    if (minPrice !== undefined && minPrice !== "" && Number.isFinite(Number(minPrice))) {
+      priceFilter.$gte = Number(minPrice);
+    }
+    if (maxPrice !== undefined && maxPrice !== "" && Number.isFinite(Number(maxPrice))) {
+      priceFilter.$lte = Number(maxPrice);
+    }
+    if (Object.keys(priceFilter).length > 0) {
+      query.rentalPrice = priceFilter;
+    }
+
+    const sortMap = {
+      price_asc: { rentalPrice: 1 },
+      price_desc: { rentalPrice: -1 },
+      newest: { createdAt: -1, _id: -1 },
+    };
+    const sortOption =
+      typeof sort === "string" ? sortMap[sort] : undefined;
+
+    let cursor = equipmentCollection.find(query);
+    if (sortOption) {
+      cursor = cursor.sort(sortOption);
+    }
+
+    const result = await cursor.toArray();
     res.send(result);
   } catch (error) {
     console.error("Error fetching equipment:", error.message);
