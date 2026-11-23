@@ -2,7 +2,7 @@ import cors from "cors";
 import "dotenv/config";
 import express from "express";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
-import { verifyAdmin, verifyOwner } from "./middleware/verifyRole.js";
+import { verifyAdmin, verifyOwner, verifyRenter } from "./middleware/verifyRole.js";
 import { createVerifyToken } from "./middleware/verifyToken.js";
 
 const app = express();
@@ -153,6 +153,75 @@ app.get(
       res.status(500).send({
         success: false,
         message: "Failed to fetch my rentals",
+      });
+    }
+  },
+);
+
+// Customers only. Returns the signed-in customer's own bookings.
+app.get(
+  "/api/v1/bookings/my-bookings",
+  verifyToken,
+  verifyRenter,
+  async (req, res) => {
+    try {
+      // The customer is identified only from the verified token.
+      const email = req.user.email;
+
+      const result = await bookingsCollection
+        .aggregate([
+          { $match: { "customer.email": email } },
+          {
+            $lookup: {
+              from: "equipmentCollection",
+              localField: "equipmentId",
+              foreignField: "_id",
+              as: "equipmentDoc",
+            },
+          },
+          {
+            $addFields: {
+              equipmentDoc: { $arrayElemAt: ["$equipmentDoc", 0] },
+            },
+          },
+          { $sort: { createdAt: -1 } },
+          {
+            $project: {
+              _id: 0,
+              id: { $toString: "$_id" },
+              equipmentId: {
+                $convert: {
+                  input: "$equipmentId",
+                  to: "string",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+              equipmentName: "$equipmentDoc.name",
+              equipmentImage: "$equipmentDoc.image",
+              startDate: 1,
+              endDate: 1,
+              bookingDate: 1,
+              totalAmount: 1,
+              paymentStatus: 1,
+              bookingStatus: 1,
+              createdAt: 1,
+            },
+          },
+        ])
+        .toArray();
+
+      res.send({
+        success: true,
+        message: "My bookings fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Error fetching my bookings:", error.message);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch my bookings",
       });
     }
   },
